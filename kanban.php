@@ -1,15 +1,47 @@
 <?php
 session_start();
+require_once 'config.php';
 
-// Si no está logueado → regresar al login
+// Si no está logueado → al login
 if (!isset($_SESSION['usuario_id'])) {
     header("Location: login.php");
     exit;
 }
 
-// Inicial del usuario para el avatar
-$usuario = $_SESSION['usuario_nom'] ?? "U";
-$inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
+$usuarioId = (int) $_SESSION['usuario_id'];
+$usuario   = $_SESSION['usuario_nom'] ?? 'U';
+$inicial   = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
+
+// Cargar tareas desde la BD
+$pendientes  = [];
+$progreso    = [];
+$completadas = [];
+
+try {
+    $pdo = getConnection();
+    $stmt = $pdo->prepare("
+        SELECT id, titulo, estado, creada_en
+        FROM tareas
+        WHERE usuario_id = :uid
+        ORDER BY id DESC
+    ");
+    $stmt->execute([':uid' => $usuarioId]);
+
+    while ($row = $stmt->fetch()) {
+        switch ($row['estado']) {
+            case 'progreso':
+                $progreso[] = $row;
+                break;
+            case 'completada':
+                $completadas[] = $row;
+                break;
+            default:
+                $pendientes[] = $row;
+        }
+    }
+} catch (PDOException $e) {
+    // Si hay error, mostramos arrays vacíos pero no rompemos la página
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -19,7 +51,9 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
     <title>Tablero Kanban - Sistema de Gestión de Tareas</title>
     <style>
         * {
-            margin: 0; padding: 0; box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
 
@@ -38,16 +72,26 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             border-bottom: 1px solid #e1e4e8;
         }
 
-        h1 { color: #172b4d; font-size: 24px; }
+        h1 {
+            color: #172b4d;
+            font-size: 24px;
+        }
 
         .user-info {
-            display: flex; align-items: center; gap: 10px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
         }
 
         .user-avatar {
-            width: 32px; height: 32px; border-radius: 50%;
-            background-color: #0052cc; color: white;
-            display: flex; justify-content: center; align-items: center;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background-color: #0052cc;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             font-weight: bold;
         }
 
@@ -58,40 +102,60 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             border-radius: 3px;
             color: #42526e;
             cursor: pointer;
+            transition: background-color 0.2s;
             text-decoration: none;
             font-size: 14px;
         }
 
-        .logout-btn:hover { background-color: #ebecf0; }
+        .logout-btn:hover {
+            background-color: #ebecf0;
+        }
 
         .board-container {
-            display: flex; gap: 16px; overflow-x: auto; padding-bottom: 20px;
+            display: flex;
+            gap: 16px;
+            overflow-x: auto;
+            padding-bottom: 20px;
         }
 
         .column {
             background-color: #ebecf0;
             border-radius: 8px;
-            width: 280px; min-width: 280px;
+            width: 280px;
+            min-width: 280px;
             padding: 12px;
-            display: flex; flex-direction: column;
+            display: flex;
+            flex-direction: column;
             max-height: calc(100vh - 150px);
         }
 
         .column-header {
-            display: flex; justify-content: space-between; align-items: center;
-            margin-bottom: 12px; padding: 0 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding: 0 8px;
         }
 
-        .column-title { font-size: 16px; font-weight: 600; color: #172b4d; }
+        .column-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #172b4d;
+        }
 
         .task-count {
             background-color: #dfe1e6;
-            border-radius: 10px; padding: 2px 8px;
-            font-size: 12px; color: #5e6c84;
+            border-radius: 10px;
+            padding: 2px 8px;
+            font-size: 12px;
+            color: #5e6c84;
         }
 
         .task-list {
-            list-style: none; overflow-y: auto; flex-grow: 1; padding: 0 4px;
+            list-style: none;
+            overflow-y: auto;
+            flex-grow: 1;
+            padding: 0 4px;
         }
 
         .task {
@@ -102,15 +166,49 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             box-shadow: 0 1px 1px rgba(9, 30, 66, 0.25);
             cursor: pointer;
             transition: background-color 0.1s;
+            position: relative;
         }
 
-        .task:hover { background-color: #f8f9fa; }
+        .task:hover {
+            background-color: #f8f9fa;
+        }
 
-        .task-title { font-weight: 500; margin-bottom: 8px; }
+        .task-title {
+            font-weight: 500;
+            margin-bottom: 8px;
+            word-break: break-word;
+        }
 
         .task-footer {
-            display: flex; justify-content: space-between;
-            font-size: 12px; color: #5e6c84;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: #5e6c84;
+        }
+
+        .task-actions {
+            display: flex;
+            gap: 4px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .task:hover .task-actions {
+            opacity: 1;
+        }
+
+        .task-action-btn {
+            background: none;
+            border: none;
+            color: #5e6c84;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 3px;
+        }
+
+        .task-action-btn:hover {
+            background-color: #ebecf0;
         }
 
         .add-task-btn {
@@ -125,10 +223,19 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             display: flex;
             align-items: center;
             gap: 4px;
+            transition: background-color 0.2s;
+        }
+
+        .add-task-btn:hover {
+            background-color: #dfe1e6;
+            color: #172b4d;
         }
 
         .add-task-form {
-            display: none; flex-direction: column; gap: 8px; margin-top: 8px;
+            display: none;
+            flex-direction: column;
+            gap: 8px;
+            margin-top: 8px;
         }
 
         .task-input {
@@ -140,12 +247,23 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             min-height: 54px;
         }
 
-        .form-actions { display: flex; gap: 8px; }
+        .task-input:focus {
+            outline: none;
+        }
+
+        .form-actions {
+            display: flex;
+            gap: 8px;
+        }
 
         .add-btn {
-            background-color: #0079bf; color: white;
-            border: none; border-radius: 3px;
-            padding: 6px 12px; cursor: pointer;
+            background-color: #0079bf;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 14px;
         }
 
         .cancel-btn {
@@ -154,207 +272,329 @@ $inicial = mb_strtoupper(mb_substr($usuario, 0, 1, 'UTF-8'));
             color: #5e6c84;
             cursor: pointer;
             padding: 6px 12px;
+            border-radius: 3px;
+            font-size: 14px;
         }
 
-        .drag-over { background-color: #e1e4e8; }
-        .dragging { opacity: 0.5; }
+        .cancel-btn:hover {
+            background-color: #dfe1e6;
+        }
+
+        .drag-over {
+            background-color: #e1e4e8;
+        }
+
+        .dragging {
+            opacity: 0.5;
+        }
 
         @media (max-width: 768px) {
-            .board-container { flex-direction: column; align-items: center; }
-            .column { width: 100%; max-width: 400px; }
+            .board-container {
+                flex-direction: column;
+                align-items: center;
+            }
+            
+            .column {
+                width: 100%;
+                max-width: 400px;
+            }
         }
     </style>
 </head>
 <body>
+    <header>
+        <h1>Tablero Kanban</h1>
+        <div class="user-info">
+            <div class="user-avatar"><?= htmlspecialchars($inicial, ENT_QUOTES, 'UTF-8') ?></div>
+            <span><?= htmlspecialchars($usuario, ENT_QUOTES, 'UTF-8') ?></span>
+            <a href="logout.php" class="logout-btn">Cerrar Sesión</a>
+        </div>
+    </header>
 
-<header>
-    <h1>Tablero Kanban</h1>
-
-    <div class="user-info">
-        <div class="user-avatar"><?= htmlspecialchars($inicial) ?></div>
-        <a href="logout.php" class="logout-btn">Cerrar Sesión</a>
-    </div>
-</header>
-
-<div class="board-container">
-
-    <!-- ⏳ COLUMNAS DEL KANBAN (Pendientes / En Progreso / Completadas) -->
-    <div class="column" id="pending-column">
-        <div class="column-header">
-            <h2 class="column-title">Pendientes</h2>
-            <span class="task-count" id="pending-count">2</span>
+    <div class="board-container">
+        <!-- Columna Pendientes -->
+        <div class="column" id="pending-column" data-estado="pendiente">
+            <div class="column-header">
+                <h2 class="column-title">Pendientes</h2>
+                <span class="task-count" id="pending-count">0</span>
+            </div>
+            <ul class="task-list" id="pending-tasks">
+                <?php foreach ($pendientes as $t): ?>
+                    <li class="task" draggable="true" data-id="<?= (int)$t['id'] ?>">
+                        <div class="task-title"><?= htmlspecialchars($t['titulo'], ENT_QUOTES, 'UTF-8') ?></div>
+                        <div class="task-footer">
+                            <span><?= htmlspecialchars(substr($t['creada_en'], 0, 16), ENT_QUOTES, 'UTF-8') ?></span>
+                            <div class="task-actions">
+                                <button class="task-action-btn" onclick="deleteTask(this, event)">🗑️</button>
+                            </div>
+                        </div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+            <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
+            <div class="add-task-form">
+                <textarea class="task-input" placeholder="Introduce un título para esta tarea..."></textarea>
+                <div class="form-actions">
+                    <button class="add-btn" onclick="addTask(this)">Añadir</button>
+                    <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
+                </div>
+            </div>
         </div>
 
-        <ul class="task-list" id="pending-tasks">
-            <li class="task" draggable="true">
-                <div class="task-title">Revisar documentación del proyecto</div>
-                <div class="task-footer"><span>Hoy</span></div>
-            </li>
+        <!-- Columna En Progreso -->
+        <div class="column" id="progress-column" data-estado="progreso">
+            <div class="column-header">
+                <h2 class="column-title">En Progreso</h2>
+                <span class="task-count" id="progress-count">0</span>
+            </div>
+            <ul class="task-list" id="progress-tasks">
+                <?php foreach ($progreso as $t): ?>
+                    <li class="task" draggable="true" data-id="<?= (int)$t['id'] ?>">
+                        <div class="task-title"><?= htmlspecialchars($t['titulo'], ENT_QUOTES, 'UTF-8') ?></div>
+                        <div class="task-footer">
+                            <span><?= htmlspecialchars(substr($t['creada_en'], 0, 16), ENT_QUOTES, 'UTF-8') ?></span>
+                            <div class="task-actions">
+                                <button class="task-action-btn" onclick="deleteTask(this, event)">🗑️</button>
+                            </div>
+                        </div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+            <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
+            <div class="add-task-form">
+                <textarea class="task-input" placeholder="Introduce un título para esta tarea..."></textarea>
+                <div class="form-actions">
+                    <button class="add-btn" onclick="addTask(this)">Añadir</button>
+                    <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
+                </div>
+            </div>
+        </div>
 
-            <li class="task" draggable="true">
-                <div class="task-title">Preparar presentación para reunión</div>
-                <div class="task-footer"><span>Mañana</span></div>
-            </li>
-        </ul>
-
-        <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
-        <div class="add-task-form">
-            <textarea class="task-input" placeholder="Introduce un título..."></textarea>
-            <div class="form-actions">
-                <button class="add-btn" onclick="addTask(this)">Añadir</button>
-                <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
+        <!-- Columna Completadas -->
+        <div class="column" id="completed-column" data-estado="completada">
+            <div class="column-header">
+                <h2 class="column-title">Completadas</h2>
+                <span class="task-count" id="completed-count">0</span>
+            </div>
+            <ul class="task-list" id="completed-tasks">
+                <?php foreach ($completadas as $t): ?>
+                    <li class="task" draggable="true" data-id="<?= (int)$t['id'] ?>">
+                        <div class="task-title"><?= htmlspecialchars($t['titulo'], ENT_QUOTES, 'UTF-8') ?></div>
+                        <div class="task-footer">
+                            <span><?= htmlspecialchars(substr($t['creada_en'], 0, 16), ENT_QUOTES, 'UTF-8') ?></span>
+                            <div class="task-actions">
+                                <button class="task-action-btn" onclick="deleteTask(this, event)">🗑️</button>
+                            </div>
+                        </div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+            <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
+            <div class="add-task-form">
+                <textarea class="task-input" placeholder="Introduce un título para esta tarea..."></textarea>
+                <div class="form-actions">
+                    <button class="add-btn" onclick="addTask(this)">Añadir</button>
+                    <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
+                </div>
             </div>
         </div>
     </div>
 
-    <div class="column" id="progress-column">
-        <div class="column-header">
-            <h2 class="column-title">En Progreso</h2>
-            <span class="task-count" id="progress-count">1</span>
-        </div>
-        <ul class="task-list" id="progress-tasks">
-            <li class="task" draggable="true">
-                <div class="task-title">Desarrollar funcionalidad de arrastrar y soltar</div>
-                <div class="task-footer"><span>En curso</span></div>
-            </li>
-        </ul>
-        <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
-        <div class="add-task-form">
-            <textarea class="task-input" placeholder="Introduce un título..."></textarea>
-            <div class="form-actions">
-                <button class="add-btn" onclick="addTask(this)">Añadir</button>
-                <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
-            </div>
-        </div>
-    </div>
+    <script>
+        let draggedTask = null;
 
-    <div class="column" id="completed-column">
-        <div class="column-header">
-            <h2 class="column-title">Completadas</h2>
-            <span class="task-count" id="completed-count">1</span>
-        </div>
-        <ul class="task-list" id="completed-tasks">
-            <li class="task" draggable="true">
-                <div class="task-title">Diseñar interfaz del tablero Kanban</div>
-                <div class="task-footer"><span>Completada</span></div>
-            </li>
-        </ul>
-        <button class="add-task-btn" onclick="toggleAddTaskForm(this)">+ Añadir una tarea</button>
-        <div class="add-task-form">
-            <textarea class="task-input" placeholder="Introduce un título..."></textarea>
-            <div class="form-actions">
-                <button class="add-btn" onclick="addTask(this)">Añadir</button>
-                <button class="cancel-btn" onclick="toggleAddTaskForm(this)">Cancelar</button>
-            </div>
-        </div>
-    </div>
+        document.addEventListener('DOMContentLoaded', function() {
+            const tasks = document.querySelectorAll('.task');
+            const columns = document.querySelectorAll('.column');
 
-</div>
+            tasks.forEach(task => {
+                task.addEventListener('dragstart', handleDragStart);
+                task.addEventListener('dragend', handleDragEnd);
+            });
 
-<script>
-let draggedTask = null;
+            columns.forEach(column => {
+                column.addEventListener('dragover', handleDragOver);
+                column.addEventListener('dragenter', handleDragEnter);
+                column.addEventListener('dragleave', handleDragLeave);
+                column.addEventListener('drop', handleDrop);
+            });
 
-document.addEventListener('DOMContentLoaded', function() {
-    const tasks = document.querySelectorAll('.task');
-    const columns = document.querySelectorAll('.column');
+            updateTaskCounters();
+        });
 
-    tasks.forEach(task => {
-        task.addEventListener('dragstart', handleDragStart);
-        task.addEventListener('dragend', handleDragEnd);
-    });
+        function handleDragStart(e) {
+            draggedTask = this;
+            this.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
 
-    columns.forEach(column => {
-        column.addEventListener('dragover', handleDragOver);
-        column.addEventListener('dragenter', handleDragEnter);
-        column.addEventListener('dragleave', handleDragLeave);
-        column.addEventListener('drop', handleDrop);
-    });
+        function handleDragEnd() {
+            this.classList.remove('dragging');
+            document.querySelectorAll('.column').forEach(column => {
+                column.classList.remove('drag-over');
+            });
+        }
 
-    updateTaskCounters();
-});
+        function handleDragOver(e) {
+            e.preventDefault();
+        }
 
-function handleDragStart(e) {
-    draggedTask = this;
-    this.classList.add('dragging');
-}
+        function handleDragEnter() {
+            this.classList.add('drag-over');
+        }
 
-function handleDragEnd() {
-    this.classList.remove('dragging');
-    document.querySelectorAll('.column').forEach(col => col.classList.remove('drag-over'));
-}
+        function handleDragLeave() {
+            this.classList.remove('drag-over');
+        }
 
-function handleDragOver(e) {
-    e.preventDefault();
-}
+        function handleDrop(e) {
+            e.preventDefault();
+            this.classList.remove('drag-over');
 
-function handleDragEnter() {
-    this.classList.add('drag-over');
-}
+            if (!draggedTask) return;
 
-function handleDragLeave() {
-    this.classList.remove('drag-over');
-}
+            const taskList = this.querySelector('.task-list');
+            const estado   = this.dataset.estado;
+            const id       = draggedTask.dataset.id;
 
-function handleDrop(e) {
-    e.preventDefault();
-    this.classList.remove('drag-over');
-    const taskList = this.querySelector('.task-list');
-    draggedTask.parentNode.removeChild(draggedTask);
-    taskList.appendChild(draggedTask);
-    updateTaskCounters();
-}
+            // Mover en el DOM
+            draggedTask.parentNode.removeChild(draggedTask);
+            taskList.appendChild(draggedTask);
+            updateTaskCounters();
 
-function toggleAddTaskForm(button) {
-    const form = button.nextElementSibling;
-    const visible = form.style.display === 'flex';
+            // Actualizar en BD
+            fetch('tareas_api.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    accion: 'cambiar_estado',
+                    id: id,
+                    estado: estado
+                })
+            }).then(r => r.json()).then(data => {
+                if (!data.ok) {
+                    alert('No se pudo actualizar la tarea: ' + (data.msg || 'Error'));
+                }
+            }).catch(err => {
+                console.error(err);
+            });
+        }
 
-    document.querySelectorAll('.add-task-form').forEach(f => f.style.display = 'none');
-    document.querySelectorAll('.add-task-btn').forEach(b => b.style.display = 'block');
+        function toggleAddTaskForm(buttonOrCancel) {
+            let form, button;
 
-    form.style.display = visible ? 'none' : 'flex';
-    button.style.display = visible ? 'block' : 'none';
+            if (buttonOrCancel.classList.contains('add-task-btn')) {
+                button = buttonOrCancel;
+                form = buttonOrCancel.nextElementSibling;
+            } else {
+                form = buttonOrCancel.parentNode.parentNode;
+                button = form.previousElementSibling;
+            }
 
-    if (!visible) form.querySelector('.task-input').focus();
-}
+            const isVisible = form.style.display === 'flex';
 
-function addTask(button) {
-    const form = button.parentNode.parentNode;
-    const input = form.querySelector('.task-input');
-    const text = input.value.trim();
+            // Ocultar todos
+            document.querySelectorAll('.add-task-form').forEach(f => f.style.display = 'none');
+            document.querySelectorAll('.add-task-btn').forEach(b => b.style.display = 'block');
 
-    if (text.length === 0) return;
+            if (!isVisible) {
+                form.style.display = 'flex';
+                button.style.display = 'none';
+                form.querySelector('.task-input').focus();
+            }
+        }
 
-    const taskList = form.parentNode.querySelector('.task-list');
+        function addTask(button) {
+            const form   = button.parentNode.parentNode;
+            const input  = form.querySelector('.task-input');
+            const texto  = input.value.trim();
+            if (texto === '') return;
 
-    const li = document.createElement('li');
-    li.className = 'task';
-    li.draggable = true;
-    li.innerHTML = `
-        <div class="task-title">${text}</div>
-        <div class="task-footer"><span>Nueva</span></div>
-    `;
+            const column = form.parentNode;
+            const lista  = column.querySelector('.task-list');
+            const estado = column.dataset.estado;
 
-    li.addEventListener('dragstart', handleDragStart);
-    li.addEventListener('dragend', handleDragEnd);
+            // Guardar en BD
+            fetch('tareas_api.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    accion: 'crear',
+                    titulo: texto,
+                    estado: estado
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.ok) {
+                    alert('No se pudo crear la tarea: ' + (data.msg || 'Error'));
+                    return;
+                }
 
-    taskList.appendChild(li);
-    input.value = '';
+                const li = document.createElement('li');
+                li.className = 'task';
+                li.draggable = true;
+                li.dataset.id = data.id;
+                li.innerHTML = `
+                    <div class="task-title">${texto}</div>
+                    <div class="task-footer">
+                        <span>Nueva</span>
+                        <div class="task-actions">
+                            <button class="task-action-btn" onclick="deleteTask(this, event)">🗑️</button>
+                        </div>
+                    </div>
+                `;
 
-    updateTaskCounters();
-    toggleAddTaskForm(form.previousElementSibling);
-}
+                li.addEventListener('dragstart', handleDragStart);
+                li.addEventListener('dragend', handleDragEnd);
 
-function updateTaskCounters() {
-    document.getElementById('pending-count').innerText =
-        document.getElementById('pending-tasks').children.length;
+                lista.prepend(li);
+                input.value = '';
+                updateTaskCounters();
+                toggleAddTaskForm(form.previousElementSibling);
+            })
+            .catch(err => {
+                console.error(err);
+            });
+        }
 
-    document.getElementById('progress-count').innerText =
-        document.getElementById('progress-tasks').children.length;
+        function deleteTask(btn, ev) {
+            ev.stopPropagation();
+            const task = btn.closest('.task');
+            const id   = task.dataset.id;
 
-    document.getElementById('completed-count').innerText =
-        document.getElementById('completed-tasks').children.length;
-}
-</script>
+            if (!confirm('¿Eliminar esta tarea?')) return;
 
+            fetch('tareas_api.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+                body: new URLSearchParams({
+                    accion: 'eliminar',
+                    id: id
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (!data.ok) {
+                    alert('No se pudo borrar la tarea: ' + (data.msg || 'Error'));
+                    return;
+                }
+                task.parentNode.removeChild(task);
+                updateTaskCounters();
+            })
+            .catch(err => console.error(err));
+        }
+
+        function updateTaskCounters() {
+            document.getElementById('pending-count').textContent =
+                document.getElementById('pending-tasks').children.length;
+
+            document.getElementById('progress-count').textContent =
+                document.getElementById('progress-tasks').children.length;
+
+            document.getElementById('completed-count').textContent =
+                document.getElementById('completed-tasks').children.length;
+        }
+    </script>
 </body>
 </html>
